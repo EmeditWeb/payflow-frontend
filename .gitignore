@@ -7,4 +7,6 @@ build/
 *.tsbuildinfo
 next-env.d.ts
 public/embed/
+test-results/
+playwright-report/
 .DS_Store

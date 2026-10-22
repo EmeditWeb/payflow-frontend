@@ -18,6 +18,7 @@ https://friendbot.stellar.org.
 |---|---|
 | `typecheck` | `npm run typecheck` |
 | `build` | `npm run build` |
+| `visual` | `npm run build:visual && npm run test:visual` — see [docs/visual-regression.md](docs/visual-regression.md) |
 
 Both must pass. The build job supplies the public env vars; if you add a new
 required variable, add it to the workflow too or the build breaks.
