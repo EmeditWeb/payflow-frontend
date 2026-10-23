@@ -5,8 +5,8 @@ name: PR preview deploy
 #
 # This runs on `workflow_run`, which has write access even when the pull
 # request comes from a fork — but it never checks out or executes the pull
-# request's code. It only zips the static files the build produced and
-# uploads them, so no secret ever reaches anything a contributor controls.
+# request's code. It only uploads the static files the build produced with
+# the Netlify CLI, so no secret ever reaches anything a contributor controls.
 #
 # One-time setup (repository or organisation secrets):
 #   NETLIFY_AUTH_TOKEN  a Netlify personal access token
@@ -44,8 +44,10 @@ jobs:
           run-id: ${{ github.event.workflow_run.id }}
           path: site
 
-      - name: Package the site
-        run: cd site && zip -qr ../deploy.zip .
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
 
       - name: Resolve the pull request
         id: pr
@@ -69,6 +71,7 @@ jobs:
         env:
           NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
           NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
         run: |
           if [ -z "$NETLIFY_AUTH_TOKEN" ] || [ -z "$NETLIFY_SITE_ID" ]; then
             {
@@ -78,13 +81,18 @@ jobs:
             echo "deployed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          response=$(curl -sS -H "Authorization: Bearer $NETLIFY_AUTH_TOKEN" \
-            -H "Content-Type: application/zip" \
-            --data-binary @deploy.zip \
-            "https://api.netlify.com/api/v1/sites/$NETLIFY_SITE_ID/deploys")
-          url=$(printf '%s' "$response" | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{try{const j=JSON.parse(d);process.stdout.write(j.ssl_url||j.url||"")}catch{process.stdout.write("")}})')
+          if ! output=$(npx --yes netlify-cli@27.14.2 deploy \
+            --dir=site \
+            --no-build \
+            --message "PR #$PR_NUMBER" \
+            --json); then
+            echo "::error::Netlify deploy failed"
+            echo "$output"
+            exit 1
+          fi
+          url=$(printf '%s' "$output" | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{try{const j=JSON.parse(d);process.stdout.write(j.deploy_url||j.url||"")}catch{process.stdout.write("")}})')
           if [ -z "$url" ]; then
-            echo "::error::Netlify deploy failed: $response"
+            echo "::error::Netlify deploy returned no URL: $output"
             exit 1
           fi
           {
