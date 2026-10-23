@@ -21,6 +21,8 @@ on:
 
 permissions:
   contents: read
+  # Download the artifact produced by the unprivileged "PR preview build" run.
+  actions: read
   pull-requests: write
 
 # One deploy per pull request branch; a newer push cancels the older deploy.
