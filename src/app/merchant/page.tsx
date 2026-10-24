@@ -1,9 +1,10 @@
 "use client";
 
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useI18n } from "@/i18n/provider";
 
-import { useCallback, useEffect, useState } from "react";
-import dynamic from "next/dynamic";
+
+
 import Link from "next/link";
 import { api, checkWebhookUrl, type ApiChargeAttempt, type ApiMandate, type ApiPlan, type ApiWebhook, type MerchantSummary, type StreamEvent } from "@/lib/api";
 import { RevenueChart } from "@/components/RevenueChart";
@@ -47,11 +48,24 @@ import { formatUsdEstimate, formatUsdcEstimate, useXlmUsdPrice } from "@/lib/pri
 import { AmountInput } from "@/components/AmountInput";
 import { CopyButton } from "@/components/CopyButton";
 import { QrCode } from "@/components/QrCode";
+
+import { OnboardingChecklist } from "@/components/OnboardingChecklist";
 import { AddressLink, Badge, Dialog, Empty, Notice, Panel, SkeletonRows, Stat, TimeAgo, TxLink } from "@/components/ui";
 import { subscribeLink } from "@/lib/share";
 
+const PERIOD_OPTIONS = [
+  { label: "Every minute (demo)", value: 60 },
+  { label: "Daily", value: 86_400 },
+  { label: "Weekly", value: 604_800 },
+  { label: "Monthly", value: 2_592_000 },
+  { label: "Yearly", value: 31_536_000 },
+];
+
 /** How far back the revenue chart looks, in days. */
 const REVENUE_WINDOW_DAYS = 90;
+
+/** localStorage key for the dismissed onboarding checklist. */
+const ONBOARDING_DISMISSED_KEY = "payflow:merchant:onboarding-dismissed";
 
 /**
  * "subscriber pays X, you receive Y after the Z% fee".
@@ -885,6 +899,26 @@ export default function MerchantPage() {
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
 
+  /**
+   * Whether the merchant has dismissed the onboarding checklist.
+   *
+   * Read after mount so the statically prerendered markup (no localStorage)
+   * and the hydrated one cannot disagree. `null` means "not yet read".
+   */
+  const [onboardingDismissed, setOnboardingDismissed] = useState<boolean | null>(null);
+  // Set when the merchant copies a plan link or opens its QR code: the
+  // checklist cannot see a link leaving the page any other way.
+  const [sharedLink, setSharedLink] = useState(false);
+  useEffect(() => {
+    try {
+      setOnboardingDismissed(window.localStorage.getItem(ONBOARDING_DISMISSED_KEY) === "1");
+    } catch {
+      // Storage can be unavailable (private mode, disabled cookies); treat
+      // that as "not dismissed" so the checklist still shows.
+      setOnboardingDismissed(false);
+    }
+  }, []);
+
   // Track who paused each mandate: "subscriber" | "merchant" | undefined
   // Updated by the SSE stream when available.
   const [pausedBy, setPausedBy] = useState<Map<number, "subscriber" | "merchant">>(new Map());
@@ -933,6 +967,30 @@ export default function MerchantPage() {
   // instant the page loads, while a custom count only exists once the
   // merchant has asked for one — so the gap is theirs to fill, said plainly.
   const periodError = periodCheck.ok ? null : periodCheck.message;
+
+  /**
+   * Onboarding checklist state, derived from data already loaded above.
+   *
+   * - fundWallet: the merchant's own XLM/asset balance is not read here, so
+   *   this is inferred from whether any write has succeeded — a merchant who
+   *   has published a plan or has a mandate has necessarily funded the
+   *   account. Before that, the item stays open and links to Friendbot.
+   * - publishPlan: at least one plan exists.
+   * - shareLink: the merchant has opened the public page at least once; we
+   *   cannot observe a share, so this ticks when the public page is opened
+   *   from the dashboard (tracked in localStorage).
+   * - firstSubscriber: at least one mandate exists.
+   */
+  const onboarding = useMemo(() => {
+    const hasPlan = (plans?.length ?? 0) > 0;
+    const hasSubscriber = (mandates?.length ?? 0) > 0;
+    return {
+      fundWallet: hasPlan || hasSubscriber,
+      publishPlan: hasPlan,
+      shareLink: sharedLink,
+      firstSubscriber: hasSubscriber,
+    };
+  }, [plans, mandates, sharedLink]);
 
   const load = useCallback(async () => {
     if (!address) return;
@@ -1429,6 +1487,21 @@ export default function MerchantPage() {
 
   return (
     <div className="space-y-6">
+      {onboardingDismissed === false && (
+        <OnboardingChecklist
+          address={address}
+          state={onboarding}
+          onDismiss={() => {
+            setOnboardingDismissed(true);
+            try {
+              window.localStorage.setItem(ONBOARDING_DISMISSED_KEY, "1");
+            } catch {
+              // Best-effort: dismissal still applies for this session.
+            }
+          }}
+        />
+      )}
+
       <MerchantChurnPanel
         key={address}
         merchant={address}
@@ -1710,6 +1783,13 @@ export default function MerchantPage() {
               <Link
                 href={`/m/?address=${address}`}
                 className="btn-ghost whitespace-nowrap"
+                onClick={() => {
+                  try {
+                    window.localStorage.setItem("payflow:merchant:shared-link", "1");
+                  } catch {
+                    // Best-effort: the checklist item simply stays open.
+                  }
+                }}
               >{tr("Public page")}</Link>
               <CopyButton value={publicUrl} label={tr("public page link")} />
             </div>
@@ -1947,7 +2027,10 @@ export default function MerchantPage() {
                       type="button"
                       className="btn-ghost text-xs"
                       aria-expanded={qrPlan === p.id}
-                      onClick={() => setQrPlan(qrPlan === p.id ? null : p.id)}
+                      onClick={() => {
+                        setQrPlan(qrPlan === p.id ? null : p.id);
+                        setSharedLink(true);
+                      }}
                     >
                       {qrPlan === p.id ? tr("Hide QR") : tr("Show QR")}
                     </button>
