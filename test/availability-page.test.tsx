@@ -53,7 +53,7 @@ it("leaves legacy/unlimited plans unchanged", async () => {
   expect(screen.queryByText(/seats|Available until/)).toBeNull();
   fireEvent.click(screen.getAllByRole("button", { name: "Subscribe" })[0]!);
   // Issue #139: the signature request now sits behind a confirmation dialog.
-  fireEvent.click(screen.getByRole("button", { name: "Confirm and sign" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Confirm and sign" }));
   await vi.waitFor(() => expect(mocks.subscribe).toHaveBeenCalledTimes(1));
 });
 it("explains missing count support", async () => {
@@ -78,7 +78,7 @@ it("rechecks seats before submitting", async () => {
   fireEvent.click(await screen.findByRole("button", { name: "Subscribe" }));
   // The re-read happens when the confirmation is accepted, so that is what
   // this test has to click through to (issue #139).
-  fireEvent.click(screen.getByRole("button", { name: "Confirm and sign" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Confirm and sign" }));
   await screen.findByText("0 seats left");
   expect(mocks.subscribe).not.toHaveBeenCalled();
 });
@@ -98,7 +98,7 @@ it("does not submit after an account switch during the final read", async () => 
   mocks.plans.mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
   const view = render(<SubscribePage />);
   fireEvent.click(await screen.findByRole("button", { name: "Subscribe" }));
-  fireEvent.click(screen.getByRole("button", { name: "Confirm and sign" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Confirm and sign" }));
   const oldFinish = finish;
   mocks.wallet.address = "wallet-b";
   view.rerender(<SubscribePage />);
@@ -136,7 +136,7 @@ it("does not sign when the plan expires during simulation", async () => {
   });
   render(<SubscribePage />);
   fireEvent.click(await screen.findByRole("button", { name: "Subscribe" }));
-  fireEvent.click(screen.getByRole("button", { name: "Confirm and sign" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Confirm and sign" }));
   expect(await screen.findByText(/closed to new subscriptions/)).toBeTruthy();
   expect(mocks.wallet.signXdr).not.toHaveBeenCalled();
   vi.restoreAllMocks();

@@ -26,7 +26,7 @@ import { filterAndSortPlans, type PlanPeriodOption, type PlanSortOption } from "
 import { formatUsdEstimate, formatUsdcEstimate, useXlmUsdPrice } from "@/lib/price";
 import { checkChargeLimit, confirmationFor } from "@/lib/subscribe-confirmation";
 import { Dialog, Empty, MerchantAccount, Notice, Panel, SkeletonPlanCards, TxLink } from "@/components/ui";
-
+import { useAction } from "@/lib/useAction";
 import { SubscriberGuide } from "@/components/SubscriberGuide";
 
 /** Remaining seats in words, without inventing a count the source cannot provide. */
@@ -164,12 +164,23 @@ function SubscribeInner() {
   const { address, networkMismatch, signXdr } = useWallet();
   const [plans, setPlans] = useState<ApiPlan[] | null>(null);
   const [maxCharges, setMaxCharges] = useState<Record<number, string>>({});
-  const [busy, setBusy] = useState<number | null>(null);
   const [depositBusy, setDepositBusy] = useState<number | null>(null);
   const [vaultBalances, setVaultBalances] = useState<Record<string, bigint>>({});
   const [direct, setDirect] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const { run, getState, reset } = useAction();
+  // Which plan is being signed for, and the hash once it lands: useAction
+  // tracks that an action is running, not which plan or what it returned.
+  const [busy, setBusy] = useState<number | null>(null);
   const [done, setDone] = useState<string | null>(null);
+  const [localError, setLocalError] = useState<string | null>(null);
+  // The key of the last subscribe attempt, kept after it finishes so its
+  // failure is still readable once no plan is busy any more.
+  const [lastKey, setLastKey] = useState<string | null>(null);
+  const error = localError ?? (lastKey ? getState(lastKey).error : null);
+  const setError = setLocalError;
+  // The plan just subscribed to, so the confirmation can say when the trial it
+  // advertised actually ends. The mandate id is not returned by `subscribe`, so
+  // this is the only place the trial length is known at signing time.
   const [doneTrial, setDoneTrial] = useState<{ plan: string; seconds: number } | null>(null);
   // The subscription the subscriber has asked to confirm. Nothing is signed
   // until they press the dialog's confirm button; `at` is the wall clock the
@@ -391,9 +402,11 @@ function SubscribeInner() {
       return;
     }
     setBusy(plan.id);
-    setError(null);
     setDone(null);
-    try {
+    setLocalError(null);
+    reset(`subscribe-${plan.id}`);
+    setLastKey(`subscribe-${plan.id}`);
+    const hash = await run(`subscribe-${plan.id}`, async () => {
       const latest = (await load()).find((p) => p.id === plan.id);
       if (walletState.current.address !== address || walletState.current.networkMismatch) {
         throw new Error(tr("Wallet changed. Check your wallet and try again."));
@@ -414,18 +427,16 @@ function SubscribeInner() {
         plan.id,
         limit,
       );
-      setDone(hash);
       setDoneTrial(
         trialSeconds(plan) > 0
           ? { plan: plan.name || `Plan #${plan.id}`, seconds: trialSeconds(plan) }
           : null,
       );
       await load();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusy(null);
-    }
+      return hash;
+    });
+    setBusy(null);
+    if (hash) setDone(hash);
   }
 
   const active = useMemo(() => (plans ?? []).filter((p) => p.active === 1), [plans]);
