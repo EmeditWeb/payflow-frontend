@@ -5,7 +5,9 @@ import { useI18n } from "@/i18n/provider";
 import { api, type ApiPlan } from "@/lib/api";
 import { chainPlans } from "@/lib/chain";
 import { config } from "@/lib/config";
-import { payflow } from "@/lib/payflow";
+// The SDK-backed contract module loads on demand, so the Stellar SDK
+// stays out of this route's first-load bundle.
+import { payflow } from "@/lib/lazy-payflow";
 import { useWallet } from "@/lib/wallet";
 import { metaFor } from "@/lib/token";
 import type { TokenMeta } from "@/lib/format";

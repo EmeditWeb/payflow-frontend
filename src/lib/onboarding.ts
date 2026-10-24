@@ -1,4 +1,4 @@
-import type { Mandate } from "@/lib/payflow";
+import type { Mandate } from "./payflow-core";
 
 export interface OnboardingItem {
   id: OnboardingItemId;

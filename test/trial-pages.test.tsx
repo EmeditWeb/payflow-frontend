@@ -62,6 +62,13 @@ vi.mock("@/lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/api")>();
   return { api: apiMock, checkWebhookUrl: actual.checkWebhookUrl };
 });
+// The page reads these from the SDK-free core, so the stubs stand there too.
+vi.mock("@/lib/payflow-core", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/payflow-core")>()),
+  mandatePendingTransfer: () => null,
+  MAX_NAME_LEN: 64,
+  nameByteLength: (n: string) => n.length,
+}));
 vi.mock("@/lib/payflow", () => ({
   // payflow-contract#68 not shipped; the two-step transfer stays off.
   mandateSupportsTransfer: () => false,

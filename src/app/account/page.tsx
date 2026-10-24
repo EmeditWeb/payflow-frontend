@@ -5,7 +5,9 @@ import { useI18n } from "@/i18n/provider";
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { StrKey } from "@stellar/stellar-sdk";
+// `/base` is the SDK without the RPC client or transaction builder: StrKey is
+// a self-contained checksum helper, so importing it must not cost a bundle.
+import { StrKey } from "@stellar/stellar-sdk/base";
 import { api, type ApiMandate, type ApiVaultEvent, type StreamEvent } from "@/lib/api";
 import { buildUpcomingChargesCalendar, CALENDAR_FILENAME } from "@/lib/calendar";
 import {
@@ -42,18 +44,11 @@ const DEFAULT_TOKENS: readonly ConfiguredToken[] = [
   },
 ];
 import { nextChargeAmount, remainingDiscountCharges } from "@/lib/discount";
-import {
-  mandateIsPastDue,
-  mandatePastDueUntil,
-  mandatePauseUntil,
-  mandatePendingTransfer,
-  mandateSupportsTransfer,
-  mandateSupportsSpendLimit,
-  payflow,
-  server,
-  vaultSupportsDepositFor,
-  validateRecipient,
-} from "@/lib/payflow";
+import { mandateIsPastDue, mandatePastDueUntil, mandatePauseUntil, mandateSupportsSpendLimit, validateRecipient } from "@/lib/payflow-core";
+// The SDK-backed contract module loads on demand, so the Stellar SDK
+// stays out of this route's first-load bundle.
+import { loadPayflow, payflow, server } from "@/lib/lazy-payflow";
+import { mandatePendingTransfer, mandateSupportsTransfer } from "@/lib/payflow-core";
 import { mandateStatus } from "@/lib/mandate-status";
 import { createdAtDate, paymentDateRange, paymentRow, sortPaymentsNewestFirst } from "@/lib/payments";
 import { useWallet } from "@/lib/wallet";
@@ -510,9 +505,11 @@ function AccountInner() {
       return;
     }
     let live = true;
-    void vaultSupportsDepositFor(address).then((supported) => {
-      if (live) setFundSupport(supported);
-    });
+    void loadPayflow()
+      .then((mod) => mod.vaultSupportsDepositFor(address))
+      .then((supported: boolean) => {
+        if (live) setFundSupport(supported);
+      });
     return () => {
       live = false;
     };

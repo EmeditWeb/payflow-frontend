@@ -76,6 +76,15 @@ vi.mock("@/lib/api", () => ({
   },
   checkWebhookUrl: vi.fn(),
 }));
+// The page reads these from the SDK-free core, so the stubs stand there too.
+vi.mock("@/lib/payflow-core", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/payflow-core")>()),
+  mandatePendingTransfer: () => null,
+  mandateSupportsSpendLimit: vi.fn(() => false),
+  mandateStatus: (raw: unknown) =>
+    Array.isArray(raw) ? String(raw[0] ?? "") : String(raw ?? ""),
+  ...payflowHelpers,
+}));
 vi.mock("@/lib/payflow", () => ({
   // payflow-contract#68 not shipped; the two-step transfer stays off.
   mandateSupportsTransfer: () => false,

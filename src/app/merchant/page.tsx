@@ -44,7 +44,11 @@ import {
   remainingDiscountCharges,
   supportsDiscounts,
 } from "@/lib/discount";
-import { MAX_NAME_LEN, MAX_PAGE, mandatePauseUntil, mandateRefundableAmount, mandateSupportsRefund, nameByteLength, validatePlanName, payflow, server, decodeContractError } from "@/lib/payflow";
+import { MAX_NAME_LEN, MAX_PAGE, mandatePauseUntil, mandateRefundableAmount, mandateSupportsRefund, nameByteLength, decodeContractError } from "@/lib/payflow-core";
+// The SDK-backed contract module loads on demand, so the Stellar SDK
+// stays out of this route's first-load bundle.
+import { payflow, server } from "@/lib/lazy-payflow";
+
 import {
   checkProfileName,
   checkProfileUrl,
@@ -65,6 +69,16 @@ import { formatUsdEstimate, formatUsdcEstimate, useXlmUsdPrice } from "@/lib/pri
 import { AmountInput } from "@/components/AmountInput";
 import { CopyButton } from "@/components/CopyButton";
 import { QrCode } from "@/components/QrCode";
+// Mirrors payflow.validatePlanName, kept here so the form can check a name
+// without the SDK-backed module in this route's first-load bundle.
+function validatePlanNameLocal(name: string): string | null {
+  const trimmed = name.trim();
+  if (trimmed === "") return "Enter a plan name.";
+  if (nameByteLength(trimmed) > MAX_NAME_LEN) {
+    return `Too long — ${MAX_NAME_LEN} bytes maximum.`;
+  }
+  return null;
+}
 
 import { OnboardingChecklist } from "@/components/OnboardingChecklist";
 import { AddressLink, Badge, Dialog, Empty, Notice, Panel, SkeletonRows, Stat, TimeAgo, TxLink } from "@/components/ui";
@@ -2314,7 +2328,7 @@ export default function MerchantPage() {
                       className="w-full mt-3 space-y-2"
                       onSubmit={(e) => {
                         e.preventDefault();
-                        if (validatePlanName(renameValue) !== null) return;
+                        if (validatePlanNameLocal(renameValue) !== null) return;
                         void run(`rename-${p.id}`, () =>
                           payflow.setPlanName(address, signXdr, p.id, renameValue),
                         ).then(() => setRenameFor(null));
@@ -2326,7 +2340,7 @@ export default function MerchantPage() {
                         className="input"
                         value={renameValue}
                         onChange={(e) => setRenameValue(e.target.value)}
-                        aria-invalid={validatePlanName(renameValue) !== null}
+                        aria-invalid={validatePlanNameLocal(renameValue) !== null}
                         aria-describedby={`rename-error-${p.id}`}
                       />
                       <p id={`rename-error-${p.id}`} className="text-sm text-danger" role="alert">
@@ -2339,7 +2353,7 @@ export default function MerchantPage() {
                         <button
                           type="submit"
                           className="btn-primary text-xs"
-                          disabled={busy !== null || networkMismatch || validatePlanName(renameValue) !== null}
+                          disabled={busy !== null || networkMismatch || validatePlanNameLocal(renameValue) !== null}
                         >{busy === `rename-${p.id}` ? tr("Saving…") : tr("Save name")}</button>
                       </div>
                     </form>

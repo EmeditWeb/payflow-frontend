@@ -1,5 +1,10 @@
-import { StrKey } from "@stellar/stellar-sdk";
-import { MAX_PAGE, mandateStatus, payflow, type Mandate, type Plan } from "./payflow";
+// `/base` is the SDK without the RPC client or transaction builder: StrKey is
+// a self-contained checksum helper, so importing it must not cost a bundle.
+import { StrKey } from "@stellar/stellar-sdk/base";
+import { MAX_PAGE, mandateStatus, type Mandate, type Plan } from "./payflow-core";
+// The SDK-backed contract module loads on demand, so the Stellar SDK
+// stays out of this route's first-load bundle.
+import { payflow } from "./lazy-payflow";
 import type { ApiCharge, ApiMandate, ApiPlan, ApiVaultEvent, MerchantSummary } from "./api";
 import { availabilityInteger } from "./availability";
 import { fromStroops } from "./format";

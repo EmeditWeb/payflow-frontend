@@ -1,5 +1,7 @@
 import { api, type ApiHealth, type ApiKeeperHistory } from "./api";
-import { server } from "./payflow";
+// The SDK-backed contract module loads on demand, so the Stellar SDK
+// stays out of this route's first-load bundle.
+import { server } from "./lazy-payflow";
 
 /**
  * The status page's three checks — Soroban RPC, the indexer API, and the

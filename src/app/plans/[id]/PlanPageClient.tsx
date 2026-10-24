@@ -9,7 +9,9 @@ import { api, type ApiMandate, type ApiPlan } from "@/lib/api";
 import { chainMandatesFor, chainPlans, planChargeRow, type PlanCharge } from "@/lib/chain";
 import { planAvailability } from "@/lib/availability";
 import { config } from "@/lib/config";
-import { payflow } from "@/lib/payflow";
+// The SDK-backed contract module loads on demand, so the Stellar SDK
+// stays out of this route's first-load bundle.
+import { payflow } from "@/lib/lazy-payflow";
 import { useWallet } from "@/lib/wallet";
 
 import { AddressLink, Badge, Empty, Notice, Panel, TxLink } from "@/components/ui";
