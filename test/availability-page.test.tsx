@@ -12,7 +12,10 @@ const mocks = vi.hoisted(() => ({ plans: vi.fn(), chain: vi.fn(), subscribe: vi.
 vi.mock("next/navigation", () => ({ useSearchParams: () => new URLSearchParams() }));
 vi.mock("@/lib/api", () => ({ api: { plans: mocks.plans, mandatesFor: async () => ({ mandates: [] }) } }));
 vi.mock("@/lib/chain", () => ({ chainPlans: mocks.chain }));
-vi.mock("@/lib/payflow", () => ({ payflow: { subscribe: mocks.subscribe, feeBps: mocks.feeBps } }));
+vi.mock("@/lib/payflow", () => ({
+  // payflow-contract#68 not shipped; the two-step transfer stays off.
+  mandateSupportsTransfer: () => false,
+  mandatePendingTransfer: () => null, payflow: { subscribe: mocks.subscribe, feeBps: mocks.feeBps } }));
 vi.mock("@/lib/wallet", () => ({ useWallet: () => mocks.wallet }));
 vi.mock("@/lib/token", () => ({ useTokenMetas: () => ({}), metaFor: () => ({ symbol: "XLM", decimals: 7 }) }));
 const plan = (extra: Partial<ApiPlan> = {}): ApiPlan => ({ id: 1, merchant: "merchant", name: "Cohort", token: "token", amount: "10000000", period: 86400, active: 1, ledger: 0, ...extra });

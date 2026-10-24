@@ -63,6 +63,9 @@ vi.mock("@/lib/api", async (importOriginal) => {
   return { api: apiMock, checkWebhookUrl: actual.checkWebhookUrl };
 });
 vi.mock("@/lib/payflow", () => ({
+  // payflow-contract#68 not shipped; the two-step transfer stays off.
+  mandateSupportsTransfer: () => false,
+  mandatePendingTransfer: () => null,
   payflow: payflowMock,
   MAX_NAME_LEN: 64,
   nameByteLength: (n: string) => n.length,
