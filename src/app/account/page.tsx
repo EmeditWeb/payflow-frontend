@@ -77,6 +77,7 @@ import {
   parsePauseDate,
   resumeDate,
   shortAddress,
+  maxDeposit,
 } from "@/lib/format";
 import { buildChargeSchedule, chargeShortfall } from "@/lib/schedule";
 import { computeVaultRunway } from "@/lib/runway";
@@ -119,6 +120,11 @@ function AccountInner() {
   const [history, setHistory] = useState<ApiVaultEvent[] | null>(null);
   const [indexerAvailable, setIndexerAvailable] = useState(false);
   const [amount, setAmount] = useState("");
+  // The wallet reports the native balance through its account state; a
+  // balance it has not read yet is null, not zero.
+  const { account: nativeAccount } = useWallet();
+  const nativeBalance =
+    nativeAccount?.state === "loaded" ? nativeAccount.account.balance : null;
   const [busy, setBusy] = useState<string | null>(null);
   // Cancelling is permanent, so the first click only reveals Keep/Confirm.
   const [confirmCancel, setConfirmCancel] = useState<number | null>(null);
@@ -1023,7 +1029,11 @@ function AccountInner() {
                 decimals={vaultMeta.decimals}
                 placeholder="5.0"
                 disabled={busy !== null}
-                hint={tr("Accepts 5, 5.0 — and 5,0 where commas are decimals.")}
+                hint={
+                  nativeBalance !== null && vaultMeta.symbol === "XLM"
+                    ? tr("Wallet balance: {0}", { "0": formatAmount(nativeBalance, vaultMeta) })
+                    : tr("Accepts 5, 5.0 — and 5,0 where commas are decimals.")
+                }
                 hideError={withdrawError !== null}
                 describedBy={withdrawError ? "withdraw-amount-error" : undefined}
               />
@@ -1044,6 +1054,28 @@ function AccountInner() {
               title={`Withdraw the full balance (${formatAmount(balance ?? 0n, vaultMeta)})`}
             >
               Max
+            </button>
+            <button
+              type="button"
+              className="btn-ghost"
+              disabled={busy !== null || nativeBalance === null || nativeBalance === 0n}
+              onClick={() => {
+                // XLM pays the fees and the account's own reserve, so the most
+                // that can be deposited is less than the balance on screen.
+                const fill =
+                  vaultMeta.symbol === "XLM"
+                    ? maxDeposit(nativeBalance ?? 0n)
+                    : (nativeBalance ?? 0n);
+                setAmount(fromStroops(fill, vaultMeta.decimals, vaultMeta.decimals));
+              }}
+              aria-label="Fill the amount with the maximum spendable wallet balance"
+              title={
+                vaultMeta.symbol === "XLM"
+                  ? tr("Fill max spendable balance (leaving the account reserve)")
+                  : tr("Fill full wallet balance")
+              }
+            >
+              Max wallet
             </button>
             <button
               type="button"

@@ -130,10 +130,13 @@ const TESTNET: NetworkConfig = {
   label: "Testnet",
   rpcUrl:
     process.env.NEXT_PUBLIC_SOROBAN_RPC_URL ?? "https://soroban-testnet.stellar.org",
-  horizonUrl: process.env.NEXT_PUBLIC_HORIZON_URL ?? "https://horizon-testnet.stellar.org",
+/** Horizon serves account `home_domain`s (stellar.toml names); RPC does not. */
+  horizonUrl:
+    process.env.NEXT_PUBLIC_HORIZON_URL ??
+    "https://horizon-testnet.stellar.org",
   networkPassphrase:
     process.env.NEXT_PUBLIC_NETWORK_PASSPHRASE ?? "Test SDF Network ; September 2015",
-  network: process.env.NEXT_PUBLIC_STELLAR_NETWORK ?? "TESTNET",
+  network: "TESTNET",
   apiUrl: process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080",
   readSource:
     process.env.NEXT_PUBLIC_READ_SOURCE ??
