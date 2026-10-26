@@ -1,4 +1,5 @@
 import { Address, nativeToScVal, xdr } from "@stellar/stellar-sdk";
+import type { Mandate, Plan, SignXdr } from "./payflow-core";
 
 /**
  * Typed bindings for the deployed Payflow contracts.
@@ -11,9 +12,13 @@ import { Address, nativeToScVal, xdr } from "@stellar/stellar-sdk";
  * interface.
  */
 
-/** Signs a transaction XDR and returns the signed XDR. Supplied by the wallet. */
-export type SignXdr = (xdrString: string) => Promise<string>;
+/**
+ * The record types the contracts return. Re-exported from `payflow-core` so
+ * the bindings and the rest of the contract layer share one definition.
+ */
+export type { Mandate, Plan, SignXdr };
 
+/** Encoders for the ScVal types the contracts take. */
 export const arg = {
   address: (v: string): xdr.ScVal => new Address(v).toScVal(),
   u64: (v: number | bigint): xdr.ScVal => nativeToScVal(v, { type: "u64" }),
@@ -24,83 +29,6 @@ export const arg = {
 };
 
 export type ContractScope = "plan_registry" | "vault" | "subscription";
-
-export interface Plan {
-  id: bigint;
-  merchant: string;
-  name: string;
-  token: string;
-  amount: bigint;
-  period: bigint;
-  active: boolean;
-  /**
-   * Free trial in seconds, 0 meaning none — from payflow-contract#9, which has
-   * not shipped. Optional because a contract built before that change decodes
-   * to a map with no `trial` key, and reporting 0 there would claim a trial
-   * does not exist rather than that we cannot tell.
-   */
-  trial?: bigint;
-  /** Proposed payflow-contract#26; absent on older deployments. */
-  available_until?: bigint;
-  /** Proposed payflow-contract#25; 0 means unlimited. */
-  max_subscribers?: number;
-}
-
-export interface Mandate {
-  id: bigint;
-  subscriber: string;
-  plan_id: bigint;
-  merchant: string;
-  token: string;
-  amount: bigint;
-  period: bigint;
-  next_charge: bigint;
-  last_charge: bigint;
-  charges_made: number;
-  max_charges: number;
-  fee_bps: number;
-  /**
-   * The discount the merchant set on this mandate, in basis points.
-   *
-   * Optional on purpose: payflow-contract#37 has not shipped, so a contract
-   * built before it returns a `Mandate` map without these keys. Absent means
-   * "this contract cannot say", which is not the same as "no discount" — see
-   * `supportsDiscounts` in `lib/discount`.
-   */
-  discount_bps?: number;
-  /** How many charges the discount covers. */
-  discount_charges?: number;
-  /** How many of those charges have been settled. */
-  discount_charges_made?: number;
-  /**
-   * A `#[contracttype]` enum variant without data is encoded as a vector
-   * holding its name, so this decodes as `["Active"]`, not `"Active"`. Use
-   * `mandateStatus` to read it.
-   */
-  status: string | string[];
-  /**
-   * The trial frozen into the mandate at subscribe time, from
-   * payflow-contract#9. Optional for the same reason as `Plan.trial`.
-   */
-  trial?: bigint;
-  /**
-   * When a paused mandate resumes, from payflow-contract#41. Optional because
-   * the deployed contract predates it: a mandate decoded without the key means
-   * that contract cannot service a pause-until, and the UI hides the control
-   * rather than building a transaction the contract would reject.
-   */
-  pause_until?: bigint;
-  /**
-   * When a past-due mandate's grace period ends, from payflow-contract#34.
-   * Optional because the deployed contract predates it.
-   */
-  past_due_until?: bigint;
-  /**
-   * The net amount the merchant received that can be refunded to the subscriber,
-   * from payflow-contract#36. Optional because the deployed contract predates it.
-   */
-  refundable_amount?: bigint;
-}
 
 export interface CreatePlanParams {
   token: string;
@@ -267,6 +195,43 @@ export const planRegistryMethods = {
     "plan_registry",
     () => [],
   ),
+  /**
+   * Proposed payflow-contract#16. Only call when `supportsPlanRename` confirms
+   * the deployed registry carries the method.
+   */
+  setPlanName: writeMethod<[planId: number | bigint, name: string]>(
+    "set_plan_name",
+    "plan_registry",
+    (source, planId, name) => [
+      arg.address(source),
+      arg.u64(planId),
+      arg.string(name),
+    ],
+  ),
+  /**
+   * Paged plan ids, oldest first. The registry limits one call to `MAX_PAGE`
+   * ids.
+   */
+  listPlans: readMethod<[start: number | bigint], bigint[]>(
+    "list_plans",
+    "plan_registry",
+    (start) => [arg.u64(start)],
+  ),
+  /** The merchant's own profile, or the registry's ProfileNotFound error (#8). */
+  getProfile: readMethod<[], { name?: unknown; url?: unknown }>(
+    "profile",
+    "plan_registry",
+    () => [],
+  ),
+  setProfile: writeMethod<[name: string, url: string]>(
+    "set_profile",
+    "plan_registry",
+    (source, name, url) => [
+      arg.address(source),
+      arg.string(name),
+      arg.string(url),
+    ],
+  ),
 };
 
 export const vaultMethods = {
@@ -377,20 +342,61 @@ export const subscriptionMethods = {
     "subscription",
     (mandateId) => [arg.u64(mandateId)],
   ),
+  /**
+   * `max_charges` is settled with `set_max_charges` after subscribing, so the
+   * argument is part of the call signature but not of the contract call.
+   */
   subscribe: writeMethod<[planId: number | bigint, maxCharges: number]>(
     "subscribe",
     "subscription",
-    (source, planId, maxCharges) => [
-      arg.address(source),
-      arg.u64(planId),
-      arg.u32(maxCharges),
-    ],
+    (source, planId) => [arg.address(source), arg.u64(planId)],
   ),
   cancel: writeMethod<[mandateId: number | bigint]>(
     "cancel",
     "subscription",
     (source, mandateId) => [arg.address(source), arg.u64(mandateId)],
   ),
+  pause: writeMethod<[mandateId: number | bigint]>(
+    "pause",
+    "subscription",
+    (source, mandateId) => [arg.address(source), arg.u64(mandateId)],
+  ),
+  resume: writeMethod<[mandateId: number | bigint]>(
+    "resume",
+    "subscription",
+    (source, mandateId) => [arg.address(source), arg.u64(mandateId)],
+  ),
+  /**
+   * Proposed payflow-contract#28. The contract rejects a cap below
+   * `charges_made`, so callers validate before submitting.
+   */
+  setMaxCharges: writeMethod<[mandateId: number | bigint, maxCharges: number | bigint]>(
+    "set_max_charges",
+    "subscription",
+    (source, mandateId, maxCharges) => [
+      arg.address(source),
+      arg.u64(mandateId),
+      arg.u32(Number(maxCharges)),
+    ],
+  ),
+  /**
+   * Paged mandate ids, oldest first. The subscription contract limits one call
+   * to `MAX_PAGE` ids.
+   */
+  listMandatesBySubscriber: readMethod<
+    [subscriber: string, start: number | bigint],
+    bigint[]
+  >("list_mandates_by_subscriber", "subscription", (subscriber, start) => [
+    arg.address(subscriber),
+    arg.u64(start),
+  ]),
+  listMandatesByMerchant: readMethod<
+    [merchant: string, start: number | bigint],
+    bigint[]
+  >("list_mandates_by_merchant", "subscription", (merchant, start) => [
+    arg.address(merchant),
+    arg.u64(start),
+  ]),
   /** Merchant side: permanently stop billing one of the merchant's mandates. */
   endMandate: writeMethod<[mandateId: number | bigint]>(
     "end_mandate",
@@ -454,5 +460,35 @@ export const subscriptionMethods = {
       arg.u64(mandateId),
       arg.i128(amount),
     ],
+  ),
+  /**
+   * Subscriber side: propose moving this mandate to a new wallet.
+   *
+   * Built against the interface proposed in payflow-contract#68:
+   * `transfer_mandate(subscriber: Address, mandate_id: u64, new_subscriber:
+   * Address)`. Only call this when `mandateSupportsTransfer` confirms the
+   * deployed contract carries the field.
+   */
+  transferMandate: writeMethod<[mandateId: number | bigint, newSubscriber: string]>(
+    "transfer_mandate",
+    "subscription",
+    (source, mandateId, newSubscriber) => [
+      arg.address(source),
+      arg.u64(mandateId),
+      arg.address(newSubscriber),
+    ],
+  ),
+  /**
+   * New wallet side: accept a pending transfer of a mandate to the caller.
+   *
+   * Built against the interface proposed in payflow-contract#68:
+   * `accept_mandate_transfer(new_subscriber: Address, mandate_id: u64)`. The
+   * contract only accepts when the mandate's `pending_subscriber` matches the
+   * caller.
+   */
+  acceptMandateTransfer: writeMethod<[mandateId: number | bigint]>(
+    "accept_mandate_transfer",
+    "subscription",
+    (source, mandateId) => [arg.address(source), arg.u64(mandateId)],
   ),
 };

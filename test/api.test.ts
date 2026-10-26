@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, afterEach } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { api } from "@/lib/api";
 
 /**
@@ -37,7 +37,10 @@ function jsonResponse(body: unknown, status = 200, ok = true): Response {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  // Contract-only tests stub NEXT_PUBLIC_API_URL; without this, the stub
+  // leaks into the next test and every isConfigured() call reads "".
   vi.unstubAllEnvs();
+  vi.resetModules();
 });
 
 describe("api fail-soft behaviour", () => {
@@ -160,6 +163,92 @@ describe("api fail-soft behaviour", () => {
     mockFetch(async () => jsonResponse({ error: "not found" }, 404, false));
     expect(await api.merchantRevenue("GABC")).toBeNull();
   });
+
+  it("parses timeline events and rejects malformed timeline responses", async () => {
+    mockFetch(async (url) => {
+      expect(String(url)).toContain("/api/mandates/7/timeline");
+      return jsonResponse({
+        events: [
+          {
+            event_id: "evt-1",
+            mandate_id: 7,
+            type: "charged",
+            ledger: 42,
+            amount: "1000000",
+            token: "C_TOKEN",
+            token_symbol: "USDC",
+            token_decimals: 6,
+          },
+        ],
+      });
+    });
+    expect(await api.timeline(7)).toEqual({
+      events: [
+        {
+          event_id: "evt-1",
+          mandate_id: 7,
+          type: "charged",
+          ledger: 42,
+          amount: "1000000",
+          token: "C_TOKEN",
+          token_symbol: "USDC",
+          token_decimals: 6,
+        },
+      ],
+    });
+
+    const invalidEvents = [
+      { type: "charged", mandate_id: 7, ledger: 42 },
+      { event_id: "x", mandate_id: 7, type: "unknown", ledger: 42 },
+      { event_id: "x", mandate_id: 7, type: "charged", ledger: 0 },
+      { event_id: "x", mandate_id: 8, type: "charged", ledger: 42 },
+      { event_id: "x", mandate_id: 7, type: "charged", ledger: 42, amount: "1.5" },
+      { event_id: "x", mandate_id: 7, type: "charged", ledger: 42, token_decimals: 19 },
+      { event_id: "x", mandate_id: 7, type: "charged", ledger: 42, token: "C_TOKEN" },
+      { event_id: "x", mandate_id: 7, type: "charged", ledger: 42, token_symbol: "USDC" },
+      { event_id: "x", mandate_id: 7, type: "charged", ledger: 42, token_decimals: 6 },
+      {
+        event_id: "x",
+        mandate_id: 7,
+        type: "charged",
+        ledger: 42,
+        token: "C_TOKEN",
+        token_symbol: null,
+        token_decimals: 6,
+      },
+    ];
+    for (const event of invalidEvents) {
+      mockFetch(async () => jsonResponse({ events: [event] }));
+      expect(await api.timeline(7)).toBeNull();
+    }
+
+    mockFetch(async () => jsonResponse({ data: [] }));
+    expect(await api.timeline(7)).toBeNull();
+
+    mockFetch(async () =>
+      jsonResponse({
+        events: [
+          {
+            event_id: "raw",
+            mandate_id: 7,
+            type: "charged",
+            ledger: 42,
+            amount: "1000000",
+          },
+          {
+            event_id: "raw-null",
+            mandate_id: 7,
+            type: "charged",
+            ledger: 41,
+            token: null,
+            token_symbol: null,
+            token_decimals: null,
+          },
+        ],
+      }),
+    );
+    expect(await api.timeline(7)).not.toBeNull();
+  });
 });
 
 describe("api.planStats", () => {
@@ -233,3 +322,58 @@ describe("api.planStats", () => {
   });
 });
 
+describe("api.health and api.keeper", () => {
+  // Vitest does not load .env.local, so isConfigured() is false by default;
+  // these tests exercise the configured path and stub the URL explicitly.
+  beforeEach(() => {
+    vi.stubEnv("NEXT_PUBLIC_API_URL", "http://backend.test");
+  });
+
+  it("serves /health at the root, not under /api", async () => {
+    // payflow-backend mounts the liveness probe at the root; /api/health 404s.
+    // config.apiUrl is frozen at import, so only the path is asserted here.
+    let seenUrl = "";
+    mockFetch(async (url) => {
+      seenUrl = String(url);
+      return jsonResponse({ status: "ok", indexer: null });
+    });
+    expect(await api.health()).toEqual({ status: "ok", indexer: null });
+    expect(seenUrl.endsWith("/health")).toBe(true);
+    expect(seenUrl).not.toContain("/api/health");
+  });
+
+  it("queries /api/keeper for pass history", async () => {
+    let seenUrl = "";
+    mockFetch(async (url) => {
+      seenUrl = String(url);
+      return jsonResponse({ passes: [] });
+    });
+    expect(await api.keeper()).toEqual({ passes: [] });
+    expect(seenUrl.endsWith("/api/keeper")).toBe(true);
+  });
+
+  it("returns null for both when the backend is unreachable", async () => {
+    mockFetch(() => Promise.reject(new Error("ENETUNREACH")));
+    expect(await api.health()).toBeNull();
+    expect(await api.keeper()).toBeNull();
+
+    mockFetch(async () => jsonResponse({ error: "down" }, 503, false));
+    expect(await api.health()).toBeNull();
+    expect(await api.keeper()).toBeNull();
+  });
+
+  it("issues no request at all in contract-only mode", async () => {
+    // An empty NEXT_PUBLIC_API_URL must not become a same-origin fetch
+    // against the static host, which could only 404.
+    vi.stubEnv("NEXT_PUBLIC_API_URL", "");
+    vi.resetModules();
+    const { api: unconfiguredApi } = await import("@/lib/api");
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    expect(unconfiguredApi.isConfigured()).toBe(false);
+    expect(await unconfiguredApi.health()).toBeNull();
+    expect(await unconfiguredApi.keeper()).toBeNull();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});

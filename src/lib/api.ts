@@ -104,6 +104,33 @@ export interface ApiCharge {
   ledger: number;
 }
 
+export type ApiActivityType =
+  | "subscribed"
+  | "charged"
+  | "pause_changed"
+  | "cancelled"
+  | "mandate_ended"
+  | "mandate_completed";
+
+export interface ApiTimelineEvent {
+  event_id: string;
+  mandate_id: number;
+  type: ApiActivityType;
+  ledger: number;
+  event_index?: number;
+  timestamp?: number | null;
+  tx_hash?: string | null;
+  amount?: string | null;
+  fee?: string | null;
+  token?: string | null;
+  token_symbol?: string | null;
+  token_decimals?: number | null;
+}
+
+export interface ApiTimelinePage {
+  events: ApiTimelineEvent[];
+}
+
 /**
  * A charge attempt that failed, proposed by payflow-backend#144.
  *
@@ -127,7 +154,6 @@ export interface ApiChargeAttempt {
   /** Transaction hash if the charge succeeded, null otherwise. */
   tx_hash: string | null;
 }
-
 export interface ApiWebhook {
   id: string;
   url: string;
@@ -187,6 +213,45 @@ export interface ApiVaultEvent {
  * `total_collected` is in smallest units (stroops) as a decimal string so
  * bigint math is always used — never floats.
  */
+/**
+ * The body `GET /health` answers with. Mirrors payflow-backend's own shape:
+ * `indexer` is null before the first pass, and `status` is "starting" until
+ * the lag is known.
+ */
+export interface ApiHealth {
+  /**
+   * "ok", "catching_up" or "starting" today. Left open on purpose: a backend
+   * newer than this build may answer with a status this page has never heard
+   * of, which must read as "down", not as a type error.
+   */
+  status: string;
+  network: string;
+  indexer: {
+    cursor: number;
+    latestLedger: number;
+    lag: number | null;
+    paused: boolean;
+    freshnessSeconds: number | null;
+    lastRunAt: string | null;
+    lastError: string | null;
+  } | null;
+}
+
+/** One settlement pass, as the keeper records it. */
+export interface ApiKeeperPass {
+  /** Unix seconds the pass ran at. */
+  time: number;
+  attempted: number;
+  settled: number;
+  failures: { mandateId: number; error: string }[];
+  backoff: { mandateId: number; failures: number; retryAt: number; retryIn: number }[];
+}
+
+/** `GET /api/keeper`: the recent passes, newest first. */
+export interface ApiKeeperHistory {
+  passes: ApiKeeperPass[];
+}
+
 export interface ApiPlanStats {
   /** Open mandates (active + paused). */
   subscriber_count: number;
@@ -303,6 +368,84 @@ async function get<T>(path: string): Promise<T | null> {
   }
 }
 
+const TIMELINE_TYPES = new Set<ApiActivityType>([
+  "subscribed",
+  "charged",
+  "pause_changed",
+  "cancelled",
+  "mandate_ended",
+  "mandate_completed",
+]);
+
+function isIntegerString(value: unknown): value is string {
+  return typeof value === "string" && /^\d+$/.test(value);
+}
+
+function isNullableNonEmptyString(value: unknown): value is string | null | undefined {
+  return value === undefined || value === null || (typeof value === "string" && value.trim().length > 0);
+}
+
+function hasValue(value: unknown): boolean {
+  return value !== undefined && value !== null;
+}
+
+function isTimelineEvent(value: unknown, mandateId: number): value is ApiTimelineEvent {
+  if (!value || typeof value !== "object") return false;
+  const event = value as Record<string, unknown>;
+  const decimals = event.token_decimals;
+  const metadataPresent =
+    hasValue(event.token) || hasValue(event.token_symbol) || hasValue(decimals);
+  const metadataValid = metadataPresent
+    ? typeof event.token === "string" &&
+      event.token.trim().length > 0 &&
+      typeof event.token_symbol === "string" &&
+      event.token_symbol.trim().length > 0 &&
+      typeof decimals === "number" &&
+      Number.isInteger(decimals) &&
+      decimals >= 0 &&
+      decimals <= 18
+    : true;
+  return (
+    typeof event.event_id === "string" &&
+    event.event_id.trim().length > 0 &&
+    typeof event.mandate_id === "number" &&
+    Number.isSafeInteger(event.mandate_id) &&
+    event.mandate_id > 0 &&
+    event.mandate_id === mandateId &&
+    typeof event.type === "string" &&
+    TIMELINE_TYPES.has(event.type as ApiActivityType) &&
+    typeof event.ledger === "number" &&
+    Number.isSafeInteger(event.ledger) &&
+    event.ledger > 0 &&
+    (event.event_index === undefined ||
+      (typeof event.event_index === "number" &&
+        Number.isSafeInteger(event.event_index) &&
+        event.event_index >= 0)) &&
+    (event.timestamp === undefined ||
+      event.timestamp === null ||
+      (typeof event.timestamp === "number" && Number.isSafeInteger(event.timestamp) && event.timestamp >= 0)) &&
+    isNullableNonEmptyString(event.tx_hash) &&
+    (event.amount === undefined || event.amount === null || isIntegerString(event.amount)) &&
+    (event.fee === undefined || event.fee === null || isIntegerString(event.fee)) &&
+    isNullableNonEmptyString(event.token) &&
+    isNullableNonEmptyString(event.token_symbol) &&
+    metadataValid
+  );
+}
+
+async function timeline(mandateId: number): Promise<ApiTimelinePage | null> {
+  const response = await get<unknown>(`/api/mandates/${mandateId}/timeline`);
+  if (!response || typeof response !== "object") return null;
+  const events = (response as { events?: unknown }).events;
+  if (!Array.isArray(events)) return null;
+  const validEvents: ApiTimelineEvent[] = [];
+  for (const event of events) {
+    if (!isTimelineEvent(event, mandateId)) return null;
+    validEvents.push(event);
+  }
+  return { events: validEvents };
+}
+
 async function post<T>(path: string, body: unknown): Promise<T | null> {
   try {
     const res = await fetch(`${config.apiUrl}${path}`, {
@@ -342,6 +485,7 @@ export const api = {
     get<{ mandates: ApiMandate[] }>(`/api/mandates?merchant=${merchant}`),
   charges: (mandateId: number) =>
     get<{ charges: ApiCharge[] }>(`/api/mandates/${mandateId}/charges`),
+  timeline,
   charge: async (mandateId: number, txHash: string): Promise<ApiCharge | null> => {
     const res = await get<{ charges: ApiCharge[] }>(`/api/mandates/${mandateId}/charges`);
     if (!res) return null;
@@ -386,6 +530,27 @@ export const api = {
     return get<unknown>(`/api/merchants/${address}/churn?bucket=month`);
   },
   due: () => get<{ now: number; due: ApiMandate[] }>("/api/due"),
+  /**
+   * Backend liveness probe, served at the root (`/health`, not `/api/health`).
+   *
+   * Like every call here it resolves to null when the backend is unreachable.
+   * It also short-circuits to null when the build has no backend URL at all —
+   * the public demo is contract-only, and a bare fetch("/health") there would
+   * be a same-origin request against GitHub Pages that can only 404.
+   */
+  health: () => {
+    if (!api.isConfigured()) return Promise.resolve(null);
+    return get<ApiHealth>("/health");
+  },
+  /**
+   * Keeper pass history, served only when the backend runs with the keeper
+   * enabled (`KEEPER_ENABLED=true`). Null therefore means either "backend
+   * down" or "keeper off"; the status page says so rather than guessing.
+   */
+  keeper: () => {
+    if (!api.isConfigured()) return Promise.resolve(null);
+    return get<ApiKeeperHistory>("/api/keeper");
+  },
   /**
    * Per-plan stats, proposed by payflow-backend#29.
    *

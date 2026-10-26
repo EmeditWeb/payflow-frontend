@@ -141,7 +141,9 @@ describe("generated contract bindings", () => {
     await client.setPaused(SUBSCRIBER, SIGN, 7n, true);
     await client.refund(MERCHANT, SIGN, 7n, 5_000_000n);
 
-    expect(decoded(calls[0])).toEqual([SUBSCRIBER, 7n, 12]);
+    // `max_charges` is set with `set_max_charges`, so `subscribe` sends only
+    // the subscriber and the plan id.
+    expect(decoded(calls[0])).toEqual([SUBSCRIBER, 7n]);
     expect(calls[0]?.method).toBe("subscribe");
     // set_paused is a merchant-side call: the source is not an argument.
     expect(decoded(calls[1])).toEqual([7n, true]);
